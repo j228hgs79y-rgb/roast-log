@@ -13,7 +13,7 @@ const dtstr=ms=>ms?new Date(ms).toLocaleString('zh-TW',{month:'2-digit',day:'2-d
 const elapsed=n=>{if(!Number.isFinite(n))return '—';n=Math.max(0,Math.round(n));return `${String(Math.floor(n/60)).padStart(2,'0')}:${String(n%60).padStart(2,'0')}`;};
 const secs=v=>{const x=String(v).trim().split(':').map(Number);return x.length===2&&x.every(Number.isFinite)&&x[0]>=0&&x[1]>=0&&x[1]<60?x[0]*60+x[1]:null;};
 const num=v=>v===''||v===null||v===undefined?null:Number(v);
-const notify=(message,isError=false)=>{const x=document.getElementById('toast');x.textContent=message;x.style.background=isError?'#9b493a':'#234336';x.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.classList.remove('show'),3200);};
+const notify=(message,isError=false)=>{const x=document.getElementById('toast');x.textContent=message;x.style.background=isError?'#444444':'#202020';x.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.classList.remove('show'),3200);};
 function status(text='本機已儲存'){const el=document.querySelector('#save-state');if(el)el.textContent=text;}
 function topbar(label='Roast Log'){return `<header class="topbar"><div class="brand"><div class="mark">◒</div><div><div class="strong">${esc(label)}</div><div class="sub">個人咖啡烘焙紀錄</div></div></div><span class="pill" id="save-state">本機已儲存</span></header>`;}
 function nav(){return `<nav class="nav"><div class="nav-inner">${[['home','⌂','首頁'],['search','⌕','查詢'],['data','▤','資料']].map(([k,ico,t])=>`<button class="${S.page===k?'active':''}" data-action="goto" data-page="${k}"><span class="nav-glyph">${ico}</span>${t}</button>`).join('')}</div></nav>`;}
@@ -31,7 +31,7 @@ async function load(){const d=await dump();return d;}
 function byRoast(data,store,id){return data[store].filter(x=>x.roastId===id).sort((a,b)=>store==='events'?((a.elapsedSeconds||0)-(b.elapsedSeconds||0)) : ((b.testDate||b.feedbackDate||b.createdAt||0)-(a.testDate||a.feedbackDate||a.createdAt||0)));}
 function home(data){const batches=[...data.batches].sort((a,b)=>b.roastDateTime-a.roastDateTime),active=batches.find(x=>x.status==='roasting');return `<div class="content stack">
  ${active?`<div class="card tinted stack"><div class="row between"><strong>尚未完成的烘焙</strong><span class="pill warn">可接續</span></div><div>${esc(active.productName)} · ${esc(active.batchCode)}</div><div class="small muted">入豆：${dtstr(active.chargeTime)}</div>${btn('接續烘焙 →','resume','btn primary full',`data-id="${active.id}"`)}</div>`:''}
- <section class="hero"><div class="muted small">ROAST LOG</div><h1>每一鍋，<br>留下可以回頭看的紀錄。</h1><div class="muted small">資料即時存在這台 iPhone，無網路也可以操作。</div>${btn('＋ 開始新的一鍋','new','btn primary full')}</section>
+ ${btn('＋開始新的一鍋','new','btn start-roast-button')}
  <div class="action-grid"><button class="action-card" data-action="goto" data-page="search"><b class="glyph">⌕</b><strong>查詢批次</strong><span>搜尋烘焙、測試與回饋</span></button><button class="action-card" data-action="goto" data-page="data"><b class="glyph">▤</b><strong>備份與管理</strong><span>iCloud 備份、還原與封存</span></button></div>
  <div class="section-header"><h2>最近的烘焙</h2><button class="muted-link small" data-action="goto" data-page="search">查看全部 →</button></div>
  ${batches.length?batches.slice(0,6).map(cardBatch).join(''):empty('還沒有烘焙紀錄。新增第一鍋後會顯示在這裡。')}

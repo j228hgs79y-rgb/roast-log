@@ -1,6 +1,6 @@
 # Roast Log — 個人烘焙紀錄工具
 
-**版本：1.0 首版原型（待實際 iPhone Safari 驗收）**
+**版本：1.1 黑白灰介面更新（待實際 iPhone Safari 驗收）**
 
 這是一套單人使用、iPhone 優先的離線 PWA。所有日常紀錄都保存在**目前開啟 App 的裝置的 IndexedDB**，無會員帳號、無伺服器端資料庫、無訂閱費。網頁程式本身需要一個 HTTPS 靜態網站網址；程式檔與個人紀錄是兩件不同的東西。
 
@@ -81,3 +81,10 @@ python3 -m http.server 8000
 - `sw.js` — 離線快取
 - `manifest.webmanifest`、`icons/` — 加入主畫面設定
 - `vendor/jszip.min.js` — 隨專案附帶的 JSZip；見 `vendor/JSZIP-LICENSE.md`
+
+## v1.1 介面變更
+
+- 全站使用黑白灰配色，包含圖示與 PWA 主題色。
+- 首頁移除宣傳標語及離線功能文案，只保留「＋開始新的一鍋」單一操作區塊。
+- 使用者資料及 IndexedDB 資料格式沒有變更。請於相同 GitHub Pages 網址更新，不要刪除 iPhone 主畫面已安裝的 App，也不要清除 Safari 網站資料。
+- `sw.js` 快取版本升為 `roastlog-shell-v1-1`；部署後需要連線重新開啟 App，必要時再重新載入一次，才能更新已安裝的離線快取。
