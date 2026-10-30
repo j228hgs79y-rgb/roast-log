@@ -1,0 +1,7 @@
+{
+  "name": "roast-log-personal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "iPhone-first offline personal coffee roast journal. No server or external database."
+}
