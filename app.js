@@ -3,7 +3,10 @@ import {subset,createZip,parseZip,restoreZip,archiveMatchesCurrent,formatSize} f
 const root=document.getElementById('app');
 const S={page:'home',batchId:null,tab:'overview',modal:null,query:'',dateFrom:'',dateTo:'',filter:'all',archive:null,archiveId:null,archiveQuery:'',cleanupIds:new Set(),cleanupVerified:false,cleanupInitialized:false,lastZip:null};
 let pendingSave=new Map(), toastTimer, renderToken=0, recordCache=null;
-const LABELS={charge:'入豆',turn:'回溫點',t140:'豆溫 140°C',t155:'豆溫 155°C／轉黃觀察',crack:'一爆開始',drop:'下豆',gas:'瓦斯壓力調整',air:'風門調整',sample:'抽樣觀察',other:'其他事件'};
+const LABELS={charge:'入豆',turn:'回溫點',t140:'豆溫 140°C',t155:'豆溫 155°C／轉黃觀察',t170:'豆溫 170°C',crack:'一爆開始',crack2:'二爆開始',drop:'下豆',gas:'燃料調整',air:'風門調整',sample:'豆況檢查',other:'其他事件'};
+const MILESTONE_TYPES=['charge','turn','t140','t155','t170','crack','crack2','drop'];
+const MILESTONE_NAMES={charge:'入豆',turn:'回溫點',t140:'140°C',t155:'155°C',t170:'170°C',crack:'一爆',crack2:'二爆',drop:'下豆'};
+const SPECIAL_TYPES=[['gas','燃料'],['air','風門'],['sample','豆況檢查'],['other','其他事件']];
 const now=()=>Date.now();
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const nl=v=>esc(v).replace(/\n/g,'<br>');
@@ -29,27 +32,44 @@ const lost=(b,inputs)=>{const a=totalGram(inputs);return a>0&&Number.isFinite(b.
 const cardBatch=b=>`<button class="roastline" data-action="open" data-id="${b.id}"><div><div class="title">${esc(b.productName||'未命名品項')}</div><div class="details">${esc(b.batchCode)} · ${dstr(b.roastDateTime)}</div></div><div class="row"><span class="pill ${b.status==='roasting'?'warn':''}">${b.status==='roasting'?'烘焙中':b.status==='completed'?'已結束':'待補'}</span><span class="arrow">›</span></div></button>`;
 async function load(){const d=await dump();return d;}
 function byRoast(data,store,id){return data[store].filter(x=>x.roastId===id).sort((a,b)=>store==='events'?((a.elapsedSeconds||0)-(b.elapsedSeconds||0)) : ((b.testDate||b.feedbackDate||b.createdAt||0)-(a.testDate||a.feedbackDate||a.createdAt||0)));}
-function home(data){const batches=[...data.batches].sort((a,b)=>b.roastDateTime-a.roastDateTime),active=batches.find(x=>x.status==='roasting');return `<div class="content stack">
+function home(data){const batches=[...data.batches].sort((a,b)=>b.roastDateTime-a.roastDateTime),active=batches.find(x=>x.status==='roasting'),draft=batches.find(x=>x.status==='draft');return `<div class="content stack">
  ${active?`<div class="card tinted stack"><div class="row between"><strong>尚未完成的烘焙</strong><span class="pill warn">可接續</span></div><div>${esc(active.productName)} · ${esc(active.batchCode)}</div><div class="small muted">入豆：${dtstr(active.chargeTime)}</div>${btn('接續烘焙 →','resume','btn primary full',`data-id="${active.id}"`)}</div>`:''}
+ ${!active&&draft?`<div class="card stack"><div class="row between"><strong>尚未入豆的批次</strong><span class="pill">00:00</span></div><div>${esc(draft.productName)} · ${esc(draft.batchCode)}</div>${btn('開啟操作頁','resume','btn secondary full',`data-id="${draft.id}"`)}</div>`:''}
  ${btn('＋開始新的一鍋','new','btn start-roast-button')}
  <div class="action-grid"><button class="action-card" data-action="goto" data-page="search"><b class="glyph">⌕</b><strong>查詢批次</strong><span>搜尋烘焙、測試與回饋</span></button><button class="action-card" data-action="goto" data-page="data"><b class="glyph">▤</b><strong>備份與管理</strong><span>iCloud 備份、還原與封存</span></button></div>
  <div class="section-header"><h2>最近的烘焙</h2><button class="muted-link small" data-action="goto" data-page="search">查看全部 →</button></div>
  ${batches.length?batches.slice(0,6).map(cardBatch).join(''):empty('還沒有烘焙紀錄。新增第一鍋後會顯示在這裡。')}
  </div>`;}
-function live(b,data){const events=byRoast(data,'events',b.id),charge=b.chargeTime||now();const gap=Math.floor((now()-charge)/1000);return `<div class="content stack"><div class="topnav"><button class="back" data-action="goto" data-page="home">‹</button><div><h2>${esc(b.productName)}</h2><div class="small muted">${esc(b.batchCode)}</div></div></div>
- <div class="timer"><span>入豆後經過時間</span><strong id="live-timer" data-start="${charge}">${elapsed(gap)}</strong><div class="small muted">${dtstr(charge)} 開始</div>${gap>4*3600?`<div class="notice" style="margin-top:9px">已超過 4 小時，請確認是否忘記下豆。計時不會自動重置。</div>`:''}</div>
- <div class="row between"><h2>快速記錄事件</h2><span class="small muted">按下立即存檔</span></div>
- <div class="event-grid">${[['turn','回溫點','記錄目前時間'],['t140','140°C','豆溫節點'],['t155','155°C／轉黃','觀察程度'],['crack','一爆開始','溫度與時間'],['gas','調整火力','瓦斯壓力'],['air','調整風門','開度與位置'],['sample','抽樣觀察','豆況與照片'],['other','其他事件','自由記錄'],['drop','下豆結束','結束計時']].map(([k,t,d])=>`<button class="event-btn ${k==='drop'?'drop':(['turn','crack'].includes(k)?'special':'')}" data-action="event" data-type="${k}"><strong>${t}</strong><span>${d}</span></button>`).join('')}</div>
- <div class="section-header"><h2>事件時間軸</h2>${btn('編輯批次','edit-batch','btn smallbtn',`data-id="${b.id}"`)}</div>${timeline(events)}
- </div>`;}
+function live(b,data){
+ const events=byRoast(data,'events',b.id),running=b.status==='roasting',draft=b.status==='draft';
+ const gap=running&&b.chargeTime?Math.floor((now()-b.chargeTime)/1000):0;
+ const fixed=MILESTONE_TYPES.map(type=>{
+   const entry=events.find(e=>e.eventType===type);
+   const className=entry?'done':(type==='charge'&&draft?'next':'pending');
+   const action=entry
+     ?`<button class="milestone-record done-time" data-action="edit" data-store="events" data-id="${entry.id}" aria-label="編輯${MILESTONE_NAMES[type]}紀錄">${elapsed(entry.elapsedSeconds)} <span aria-hidden="true">›</span></button>`
+     :`<button class="milestone-record" data-action="event" data-type="${type}" ${running||type==='charge'&&draft?'':'disabled'} aria-label="記錄${MILESTONE_NAMES[type]}">＋ 記錄</button>`;
+   return `<div class="milestone-row ${className}"><span class="milestone-track" aria-hidden="true"><span class="milestone-dot">${entry?'✓':''}</span></span><span class="milestone-title">${MILESTONE_NAMES[type]}</span>${action}</div>`;
+ }).join('');
+ const specialEvents=events.filter(e=>!MILESTONE_TYPES.includes(e.eventType)).sort((a,b)=>(b.elapsedSeconds||0)-(a.elapsedSeconds||0));
+ return `<div class="content stack"><div class="topnav"><button class="back" data-action="goto" data-page="home">‹</button><div><h2>${esc(b.productName)}</h2><div class="small muted">${esc(b.batchCode)}</div></div></div>
+ <div class="timer"><span>${draft?'尚未入豆':'入豆後經過時間'}</span><strong id="live-timer" ${running&&b.chargeTime?`data-start="${b.chargeTime}"`:''}>${elapsed(gap)}</strong><div class="small muted">${draft?'按下「入豆」才開始計時':`${dtstr(b.chargeTime)} 開始`}</div>${running&&gap>4*3600?`<div class="notice" style="margin-top:9px">已超過 4 小時，請確認是否忘記下豆。計時不會自動重置。</div>`:''}</div>
+ <div class="row between"><h2>烘焙時間軸</h2><span class="small muted">點選節點記錄</span></div>
+ <div class="milestone-list" aria-label="烘焙固定節點">${fixed}</div>
+ <div class="section-header"><h2>特殊動作</h2></div>
+ <div class="special-actions">${SPECIAL_TYPES.map(([type,name])=>`<button class="special-chip" data-action="event" data-type="${type}" ${running?'':'disabled'}>＋ ${name}</button>`).join('')}</div>
+ ${specialEvents.length?`<div class="section-header"><h2>其他操作紀錄</h2></div>${timeline(specialEvents)}`:''}
+ <div class="section-header"><h2>批次資料</h2>${btn('編輯批次','edit-batch','btn smallbtn',`data-id="${b.id}"`)}</div>
+ </div>`;
+}
 function timeline(events,readOnly=false){if(!events.length)return empty('尚未記錄事件。');return `<div class="card">${events.map(e=>`<div class="list-item"><span class="time">${elapsed(e.elapsedSeconds)}</span><span class="dot"></span><div class="event-body"><div class="row between"><strong>${esc(LABELS[e.eventType]||e.eventType)}</strong>${!readOnly?`<button class="muted-link small" data-action="edit" data-store="events" data-id="${e.id}">編輯</button>`:''}</div><p>${esc(mini([e.beanTemperature!=null?`${e.beanTemperature}°C`:null,e.gasPressure?`瓦斯 ${e.gasPressure}`:null,e.airflowSetting?`風門 ${e.airflowSetting}`:null,e.note]))||'已記錄時間'}</p></div></div>`).join('')}</div>`;}
 function detail(b,data,archive=false){const inputs=byRoast(data,'inputs',b.id),ev=byRoast(data,'events',b.id),tests=byRoast(data,'tests',b.id),fb=byRoast(data,'feedback',b.id);const readonly=archive;const total=totalGram(inputs);return `<div class="content stack"><div class="topnav"><button class="back" data-action="goto" data-page="${archive?'archive':'search'}">‹</button><div style="flex:1"><h2>${esc(b.productName)}</h2><div class="small muted">${esc(b.batchCode)} · ${dstr(b.roastDateTime)}</div></div>${!readonly?btn('編輯','edit-batch','btn smallbtn',`data-id="${b.id}"`):'<span class="pill">封存唯讀</span>'}</div>
  <div class="metric-row"><div class="metric"><span>入豆重量</span><strong>${total?`${(total/1000).toFixed(2)}kg`:'—'}</strong></div><div class="metric"><span>熟豆重量</span><strong>${b.roastedWeight!=null?`${(b.roastedWeight/1000).toFixed(2)}kg`:'—'}</strong></div><div class="metric"><span>失重率</span><strong>${lost(b,inputs)}</strong></div></div>
- ${b.status==='roasting'&&!readonly?btn('繼續烘焙計時 →','resume','btn primary full',`data-id="${b.id}"`):''}${b.status==='draft'&&!readonly?btn('現在入豆開始計時','start-draft','btn primary full',`data-id="${b.id}"`):''}
+ ${b.status==='roasting'&&!readonly?btn('繼續烘焙計時 →','resume','btn primary full',`data-id="${b.id}"`):''}${b.status==='draft'&&!readonly?btn('開啟操作頁（尚未入豆）','resume','btn primary full',`data-id="${b.id}"`):''}
  ${b.status==='completed'&&!readonly?btn('已完成 · 備份到 iCloud','backup','btn secondary full'):''}
  <div class="tabs">${[['overview','總覽'],['roast','烘焙'],['tests',`測試 ${tests.length}`],['feedback',`回饋 ${fb.length}`]].map(([key,t])=>`<button class="${S.tab===key?'active':''}" data-action="tab" data-tab="${key}">${t}</button>`).join('')}</div>
  ${S.tab==='overview'?`<div class="section-header"><h2>原料</h2>${!readonly?btn('＋ 新增原料','add-child','btn smallbtn',`data-store="inputs" data-roast="${b.id}"`):''}</div>${inputs.length?inputs.map(x=>`<div class="card"><div class="row between"><strong>${esc(x.greenBeanName||'未命名生豆')}</strong>${!readonly?btn('編輯','edit','btn smallbtn',`data-store="inputs" data-id="${x.id}"`):''}</div><div class="small muted">批次 ${esc(x.greenLotCode||'未紀錄')} · ${x.inputWeight!=null?`${x.inputWeight}g`:'重量未紀錄'}</div>${x.conditionNotes?`<p class="text-block" style="margin-top:10px">${nl(x.conditionNotes)}</p>`:''}</div>`).join(''):empty('尚未記錄原料')}
- <div class="section-header"><h2>下豆結果</h2>${!readonly?btn('編輯','edit-batch','btn smallbtn',`data-id="${b.id}"`):''}</div><div class="card stack">${vrow('烘焙時間',elapsed(ev.find(x=>x.eventType==='drop')?.elapsedSeconds))}${vrow('一爆至下豆',(()=>{let a=ev.find(x=>x.eventType==='crack'),d=ev.find(x=>x.eventType==='drop');return a&&d?elapsed(d.elapsedSeconds-a.elapsedSeconds):'—';})())}${vrow('DTR',dtr(b,ev)||'—')}${vrow('色度',b.colorDescription||'未紀錄')}${vrow('下豆判斷',b.dropReason||'未紀錄')}${b.notes?`<div class="divider"></div><div class="text-block">${nl(b.notes)}</div>`:''}${photoHtml(b,S.archive?.data||data)}</div>
+ <div class="section-header"><h2>下豆結果</h2>${!readonly?btn('編輯','edit-batch','btn smallbtn',`data-id="${b.id}"`):''}</div><div class="card stack">${vrow('烘焙時間',elapsed(ev.find(x=>x.eventType==='drop')?.elapsedSeconds))}${vrow('一爆至下豆',(()=>{let a=ev.find(x=>x.eventType==='crack'),d=ev.find(x=>x.eventType==='drop');return a&&d?elapsed(d.elapsedSeconds-a.elapsedSeconds):'—';})())}${vrow('DTR',dtr(b,ev)||'—')}${vrow('色度',b.colorDescription||'未紀錄')}${vrow('下豆判斷',ev.find(x=>x.eventType==='drop')?.note || (ev.some(x=>x.eventType==='drop')?'未紀錄':(b.dropReason||'未紀錄')))}${vrow('烘焙成果觀察',b.resultObservation||'未紀錄')}${b.notes?`<div class="divider"></div><div class="text-block">其他備註：${nl(b.notes)}</div>`:''}${photoHtml(b,S.archive?.data||data)}</div>
  <div class="metric-row"><button class="metric" data-action="tab" data-tab="roast"><strong>${ev.length}</strong><span>烘焙事件 ›</span></button><button class="metric" data-action="tab" data-tab="tests"><strong>${tests.length}</strong><span>個人測試 ›</span></button><button class="metric" data-action="tab" data-tab="feedback"><strong>${fb.length}</strong><span>外部回饋 ›</span></button></div>`:''}
  ${S.tab==='roast'?`<div class="section-header"><h2>烘焙時間軸</h2>${!readonly?btn('＋ 補登事件','add-event','btn smallbtn',`data-id="${b.id}"`):''}</div>${timeline(ev,readonly)}`:''}
  ${S.tab==='tests'?`<div class="section-header"><h2>個人測試</h2>${!readonly?btn('＋ 新增測試','add-child','btn smallbtn',`data-store="tests" data-roast="${b.id}"`):''}</div>${tests.length?tests.map(t=>textCard(t,'tests',readonly)).join(''):empty('尚未有個人測試。可在任何日期補登。')}`:''}
@@ -64,7 +84,7 @@ function search(data){const q=S.query.trim().toLowerCase(), all=[...data.batches
   if(S.dateFrom&&b.roastDateTime<new Date(S.dateFrom+'T00:00:00').getTime())return false;
   if(S.dateTo&&b.roastDateTime>new Date(S.dateTo+'T23:59:59').getTime())return false;
   if(!q)return true;
-  const parts=[b.productName,b.batchCode,b.dropReason,b.colorDescription,b.notes];
+  const parts=[b.productName,b.batchCode,b.dropReason,b.colorDescription,b.resultObservation,b.notes];
   for(const s of ['inputs','events','tests','feedback'])for(const rec of data[s].filter(x=>x.roastId===b.id))parts.push(...Object.values(rec).filter(x=>typeof x==='string'));
   return parts.some(x=>String(x||'').toLowerCase().includes(q));
 });return `<div class="content stack"><h1>查詢烘焙紀錄</h1><input class="search-input" type="search" data-search="query" value="${esc(S.query)}" placeholder="品項、批次、生豆、備註、回饋…" aria-label="搜尋批次"><div class="field-grid"><div class="field"><label>起始日期</label><input type="date" data-search="dateFrom" value="${esc(S.dateFrom)}"></div><div class="field"><label>結束日期</label><input type="date" data-search="dateTo" value="${esc(S.dateTo)}"></div></div><div class="row wrap">${[['all','全部'],['active','烘焙中'],['done','已結束']].map(([v,l])=>`<button class="btn smallbtn ${S.filter===v?'secondary':''}" data-action="filter" data-value="${v}">${l}</button>`).join('')}<span class="small muted">共 ${all.length} 筆</span></div><div id="search-results" class="stack">${all.length?all.map(cardBatch).join(''):empty('找不到符合條件的批次')}</div></div>`;}
@@ -74,7 +94,7 @@ function dataPage(data){const b=data.batches,modified=recordCache?.lastModifiedA
  <div class="card stack"><div class="row between"><h2>清理三個月前的資料</h2><span class="pill">${eligible.length} 批</span></div><p class="small muted">僅列出烘焙日期早於 ${dstr(cutoff.getTime())} 且未在烘焙中的批次。最近有補登的批次仍會列出，請先檢查。</p>
  ${eligible.length?`<div class="archive-list">${eligible.map(x=>{const recent=[x,...['inputs','events','tests','feedback'].flatMap(s=>data[s].filter(y=>y.roastId===x.id))].reduce((m,r)=>Math.max(m,r.updatedAt||r.createdAt||0),0);return `<label><input type="checkbox" data-clean="${x.id}" ${S.cleanupIds.has(x.id)?'checked':''}><span><b>${esc(x.productName)}</b><br><span class="small muted">${esc(x.batchCode)} · ${dstr(x.roastDateTime)} · 最後修改 ${dstr(recent)}</span></span></label>`}).join('')}</div>${btn('1. 匯出勾選批次的封存 ZIP','archive-export','btn full')}
  <label class="btn full" for="archive-verify-file">2. 讀回已儲存的封存 ZIP 並驗證</label><input id="archive-verify-file" type="file" accept=".zip,application/zip" hidden data-upload="verify">
- ${S.cleanupVerified?'<div class="notice" style="background:#e7f2e8;color:#28593a">封存檔已驗證，且與目前選取的批次資料一致。可執行清理。</div>':'<p class="footer-tip">刪除按鈕只有在你重新選取已存好的 ZIP 且驗證通過後才會啟用。</p>'}
+ ${S.cleanupVerified?'<div class="notice" style="background:#eeeeee;color:#303030">封存檔已驗證，且與目前選取的批次資料一致。可執行清理。</div>':'<p class="footer-tip">刪除按鈕只有在你重新選取已存好的 ZIP 且驗證通過後才會啟用。</p>'}
  <button class="btn warning full" data-action="cleanup-delete" ${S.cleanupVerified&&S.cleanupIds.size?'':'disabled'}>3. 刪除已驗證的 ${S.cleanupIds.size} 個批次</button>`:empty('目前沒有超過三個月的已結束批次。')}
  </div><p class="footer-tip">注意：清除 Safari 網站資料、移除 App 或手機損壞，可能導致本機紀錄遺失。請保留可讀取的 iCloud 備份。</p></div>`;}
 function archivePage(){
@@ -89,11 +109,11 @@ function archivePage(){
 }
 function modalBody(data){if(!S.modal)return '';const {store,id}=S.modal;const record=store==='batches'?data.batches.find(x=>x.id===id):data[store]?.find(x=>x.id===id);if(!record)return '';let fields='';let heading='';
  if(store==='batches'){
-   heading='編輯烘焙批次';fields=`${field('咖啡品項／配方','productName',record.productName)}${field('批次編號','batchCode',record.batchCode)}${dateFld('烘焙日期時間','roastDateTime',record.roastDateTime)}${field('熟豆重量（g）','roastedWeight',record.roastedWeight??'','number','step="any"')}${field('色度（數字或文字均可）','colorDescription',record.colorDescription||'')}${field('下豆判斷標準','dropReason',record.dropReason||'','text','',true)}${field('其他備註','notes',record.notes||'','text','',true)}`;
+   heading='編輯烘焙批次';fields=`${field('咖啡品項／配方','productName',record.productName)}${field('批次編號','batchCode',record.batchCode)}${dateFld('烘焙日期時間','roastDateTime',record.roastDateTime)}${field('熟豆重量（g）','roastedWeight',record.roastedWeight??'','number','step="any"')}${field('色度（數字或文字均可）','colorDescription',record.colorDescription||'')}${field('烘焙成果觀察','resultObservation',record.resultObservation||'','text','',true)}${record.notes?field('其他備註（舊版紀錄）','notes',record.notes,'text','',true):''}`;
  }else if(store==='inputs'){
    heading='生豆投入與豆況';fields=`${field('生豆名稱','greenBeanName',record.greenBeanName||'')}${field('生豆批次','greenLotCode',record.greenLotCode||'')}${field('投入重量（g，可留空）','inputWeight',record.inputWeight??'','number','step="any"')}${field('特殊豆況備註','conditionNotes',record.conditionNotes||'','text','',true)}`;
  }else if(store==='events'){
-   heading=LABELS[record.eventType]||'烘焙事件';fields=`${record.eventType==='charge'?'':select('事件種類','eventType',Object.entries(LABELS).filter(([k])=>k!=='charge'),record.eventType)}${field('經過時間（分:秒）','elapsedSeconds',elapsed(record.elapsedSeconds),'text','inputmode="numeric" placeholder="08:30"')}${field('豆溫（°C）','beanTemperature',record.beanTemperature??'','number','step="any"')}${(record.eventType==='gas'||record.gasPressure)?field('瓦斯壓力／刻度','gasPressure',record.gasPressure||''):''}${(record.eventType==='air'||record.airflowSetting)?field('風門位置／刻度','airflowSetting',record.airflowSetting||''):''}${field(record.eventType==='t155'?'155°C 時轉黃程度':record.eventType==='drop'?'下豆判斷標準':'觀察、操作或備註','note',record.note||'','text','',true)}`;
+   heading=LABELS[record.eventType]||'烘焙事件';fields=`${MILESTONE_TYPES.includes(record.eventType)?'':select('事件種類','eventType',SPECIAL_TYPES,record.eventType)}${field('經過時間（分:秒）','elapsedSeconds',elapsed(record.elapsedSeconds),'text','inputmode="numeric" placeholder="08:30"')}${field('豆溫（°C）','beanTemperature',record.beanTemperature??'','number','step="any"')}${(record.eventType==='gas'||record.gasPressure)?field('瓦斯壓力／刻度','gasPressure',record.gasPressure||''):''}${(record.eventType==='air'||record.airflowSetting)?field('風門位置／刻度','airflowSetting',record.airflowSetting||''):''}${field(record.eventType==='t155'?'155°C 時轉黃程度':record.eventType==='drop'?'下豆判斷標準':'觀察、操作或備註','note',record.note||'','text','',true)}`;
  }else if(store==='tests'){
    heading='個人測試／杯測';fields=`${dateFld('測試日期','testDate',record.testDate)}${select('測試類型','testType',[['杯測','杯測'],['沖煮','沖煮'],['其他','其他']],record.testType)}${field('測試方法／項目','testMethod',record.testMethod||'','text','',true)}${field('測試條件','testConditions',record.testConditions||'','text','',true)}${field('觀察與結果','observations',record.observations||'','text','',true)}${field('我的判斷／結論','conclusion',record.conclusion||'','text','',true)}`;
  }else if(store==='feedback'){
@@ -104,12 +124,35 @@ function modalBody(data){if(!S.modal)return '';const {store,id}=S.modal;const re
 async function render(){const token=++renderToken;let data=await load();if(token!==renderToken)return;recordCache=data;recordCache.lastModifiedAt=await setting('lastModifiedAt',0);recordCache.lastBackupConfirmedAt=await setting('lastBackupConfirmedAt',0);
  let page='';if(S.page==='home')page=home(data);else if(S.page==='live'){const b=data.batches.find(x=>x.id===S.batchId);page=b?live(b,data):home(data);}else if(S.page==='detail'){const b=data.batches.find(x=>x.id===S.batchId);page=b?detail(b,data):search(data);}else if(S.page==='search')page=search(data);else if(S.page==='data')page=dataPage(data);else if(S.page==='archive')page=archivePage();else if(S.page==='archive-detail'){const b=S.archive?.data.batches.find(x=>x.id===S.archiveId);page=b?detail(b,S.archive.data,true):archivePage();}
  root.innerHTML=topbar()+page+nav()+modalBody(data);tick();}
-function tick(){const el=document.getElementById('live-timer');if(el){const start=Number(el.dataset.start);el.textContent=elapsed((now()-start)/1000);}}
+function tick(){const el=document.getElementById('live-timer');if(el?.dataset.start){const start=Number(el.dataset.start);el.textContent=elapsed((now()-start)/1000);}}
 function navigate(page,more={}){Object.assign(S,{page,...more});S.modal=null;window.scrollTo({top:0,behavior:'instant'});render();}
 function nextCode(batches,dateMs){const d=localDt(dateMs).slice(0,10).replaceAll('-','');let next=1;for(const b of batches){const m=b.batchCode.match(new RegExp(`^${d}-(\\d+)$`));if(m)next=Math.max(next,Number(m[1])+1);}return `${d}-${String(next).padStart(2,'0')}`;}
-function newForm(){const date=localDt(now());return `<div class="modal-wrap"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>新增烘焙批次</h2><button class="btn smallbtn" data-action="close-modal">取消</button></div><form id="new-roast" class="form-stack"><div class="field"><label>咖啡品項／配方（必填）</label><input name="product" required autofocus placeholder="例如：肯亞 AA Top"></div><div class="field"><label>生產日期時間</label><input name="date" type="datetime-local" value="${date}" required></div><div class="field"><label>生豆批次（選填，可後補多種）</label><input name="lot" placeholder="例如：KEN-2026-07"></div><div class="field"><label>入豆重量（g，選填）</label><input name="weight" type="number" min="0" step="any" placeholder="例如：6000"></div><div class="form-note">只需要填咖啡品項即可建檔。未填完的內容與特殊豆況都可日後補登。</div><button type="submit" name="mode" value="start" class="btn primary full">立即入豆並開始計時</button><button type="submit" name="mode" value="draft" class="btn full">建立補登紀錄（不啟動計時）</button></form></div></div>`;}
-async function createRoast(form,mode){const fd=new FormData(form),product=String(fd.get('product')||'').trim();if(!product){notify('請輸入咖啡品項',true);return;}const date=new Date(fd.get('date')).getTime();if(!Number.isFinite(date))throw Error('生產日期格式不正確');const oldBatches=await getAll('batches');if(mode==='start'&&oldBatches.some(x=>x.status==='roasting')){throw Error('仍有未完成的烘焙；請先接續或結束該批次，再開始新的計時。');}const code=nextCode(oldBatches,date),id=uid(),t=now();let batch={id,batchCode:code,productName:product,roastDateTime:date,status:mode==='start'?'roasting':'draft',chargeTime:mode==='start'?t:null,roastedWeight:null,dropReason:'',colorDescription:'',notes:'',attachmentIds:[],createdAt:t,updatedAt:t};let actions=[{store:'batches',kind:'put',value:batch}];if(fd.get('lot')||fd.get('weight'))actions.push({store:'inputs',kind:'put',value:{id:uid(),roastId:id,greenBeanName:product,greenLotCode:String(fd.get('lot')||''),inputWeight:num(fd.get('weight')),conditionNotes:'',createdAt:t,updatedAt:t}});if(mode==='start')actions.push({store:'events',kind:'put',value:{id:uid(),roastId:id,eventType:'charge',elapsedSeconds:0,recordedAt:t,beanTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t}});await transact(actions);navigate(mode==='start'?'live':'detail',{batchId:id,tab:'overview'});notify('批次已建立並儲存到本機');}
-async function eventAdd(type){const b=await getOne('batches',S.batchId);if(!b)throw Error('找不到批次');const t=now(),s=b.chargeTime?Math.max(0,Math.round((t-b.chargeTime)/1000)):0;const ev={id:uid(),roastId:b.id,eventType:type,elapsedSeconds:s,recordedAt:t,beanTemperature:type==='t140'?140:type==='t155'?155:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t};const acts=[{store:'events',kind:'put',value:ev}];if(type==='drop')acts.push({store:'batches',kind:'put',value:{...b,status:'completed',updatedAt:t}});await transact(acts);if(type==='drop')S.page='detail',S.tab='overview';S.modal={store:'events',id:ev.id};await render();notify('事件已立即儲存');}
+function newForm(){const date=localDt(now());return `<div class="modal-wrap"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>新增烘焙批次</h2><button class="btn smallbtn" data-action="close-modal">取消</button></div><form id="new-roast" class="form-stack"><div class="field"><label>咖啡品項／配方（必填）</label><input name="product" required autofocus placeholder="例如：肯亞 AA Top"></div><div class="field"><label>生產日期時間</label><input name="date" type="datetime-local" value="${date}" required></div><div class="field"><label>生豆批次（選填，可後補多種）</label><input name="lot" placeholder="例如：KEN-2026-07"></div><div class="field"><label>入豆重量（g，選填）</label><input name="weight" type="number" min="0" step="any" placeholder="例如：6000"></div><div class="field"><label>特殊豆況（選填）</label><textarea name="condition" placeholder="可預先記錄原料觀察"></textarea></div><div class="form-note">建立批次後進入操作頁，計時器維持 00:00；按下「入豆」才正式開始。</div><button type="submit" class="btn primary full">建立批次，進入操作頁</button></form></div></div>`;}
+async function createRoast(form){const fd=new FormData(form),product=String(fd.get('product')||'').trim();if(!product){notify('請輸入咖啡品項',true);return;}const date=new Date(fd.get('date')).getTime();if(!Number.isFinite(date))throw Error('生產日期格式不正確');const oldBatches=await getAll('batches');const code=nextCode(oldBatches,date),id=uid(),t=now();const batch={id,batchCode:code,productName:product,roastDateTime:date,status:'draft',chargeTime:null,roastedWeight:null,dropReason:'',colorDescription:'',resultObservation:'',notes:'',attachmentIds:[],createdAt:t,updatedAt:t};const actions=[{store:'batches',kind:'put',value:batch}];if(fd.get('lot')||fd.get('weight')||fd.get('condition'))actions.push({store:'inputs',kind:'put',value:{id:uid(),roastId:id,greenBeanName:product,greenLotCode:String(fd.get('lot')||''),inputWeight:num(fd.get('weight')),conditionNotes:String(fd.get('condition')||''),createdAt:t,updatedAt:t}});await transact(actions);document.getElementById('temp-new')?.remove();navigate('live',{batchId:id});notify('批次已建立，尚未開始計時');}
+async function eventAdd(type){
+ const b=await getOne('batches',S.batchId);if(!b)throw Error('找不到批次');
+ if(b.status==='completed')throw Error('這批已結束；請從批次詳情補登或編輯紀錄。');
+ if(type==='charge'){
+   if(b.status!=='draft')throw Error('已經入豆，計時不會重複開始。');
+   const active=(await getAll('batches')).some(x=>x.id!==b.id&&x.status==='roasting');
+   if(active)throw Error('還有另一鍋正在計時；請先結束該批次。');
+   const t=now();
+   await transact([{store:'batches',kind:'put',value:{...b,status:'roasting',chargeTime:t,updatedAt:t}},{store:'events',kind:'put',value:{id:uid(),roastId:b.id,eventType:'charge',elapsedSeconds:0,recordedAt:t,beanTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t}}]);
+   await render();notify('已入豆，開始計時');return;
+ }
+ if(b.status!=='roasting'||!b.chargeTime)throw Error('請先按「入豆」開始計時。');
+ if(MILESTONE_TYPES.includes(type)){
+   const old=(await getAll('events')).find(e=>e.roastId===b.id&&e.eventType===type);
+   if(old){S.modal={store:'events',id:old.id};await render();return;}
+ }
+ const t=now(),s=Math.max(0,Math.round((t-b.chargeTime)/1000));
+ const ev={id:uid(),roastId:b.id,eventType:type,elapsedSeconds:s,recordedAt:t,beanTemperature:{t140:140,t155:155,t170:170}[type]??null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t};
+ const acts=[{store:'events',kind:'put',value:ev}];
+ if(type==='drop')acts.push({store:'batches',kind:'put',value:{...b,status:'completed',updatedAt:t}});
+ await transact(acts);
+ if(type==='drop'){S.page='detail';S.tab='overview';}
+ S.modal={store:'events',id:ev.id};await render();notify('事件已儲存');
+}
 async function childAdd(store,roastId){const t=now(),id=uid();let obj={id,roastId,createdAt:t,updatedAt:t,attachmentIds:[]};if(store==='inputs')Object.assign(obj,{greenBeanName:'',greenLotCode:'',inputWeight:null,conditionNotes:''});if(store==='tests')Object.assign(obj,{testDate:t,testType:'杯測',testMethod:'',testConditions:'',observations:'',conclusion:''});if(store==='feedback')Object.assign(obj,{feedbackDate:t,sourceType:'客戶',sourceName:'',feedbackContent:'',conditions:'',myAnalysis:'',followUp:''});await write(store,obj);S.modal={store,id};await render();}
 async function addManualEvent(roastId){const t=now(),obj={id:uid(),roastId,eventType:'other',elapsedSeconds:0,recordedAt:t,beanTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t};await write('events',obj);S.modal={store:'events',id:obj.id};await render();}
 const pending=new Map(), inFlight=new Set(), writeQueues=new Map();
@@ -169,9 +212,9 @@ async function takeAction(el){const act=el.dataset.action;if(!act)return;
  case 'goto':navigate(el.dataset.page);break;
  case 'new':{const wrap=document.createElement('div');wrap.id='temp-new';wrap.innerHTML=newForm();root.append(wrap);break;}
  case 'close-modal':await flushAll();S.modal=null;document.getElementById('temp-new')?.remove();await render();break;
- case 'open':{const b=await getOne('batches',el.dataset.id);navigate(b?.status==='roasting'?'live':'detail',{batchId:el.dataset.id,tab:'overview'});break;}
+ case 'open':{const b=await getOne('batches',el.dataset.id);navigate(b?.status==='roasting'||b?.status==='draft'?'live':'detail',{batchId:el.dataset.id,tab:'overview'});break;}
  case 'resume':navigate('live',{batchId:el.dataset.id});break;
- case 'start-draft':{const b=await getOne('batches',el.dataset.id);if(!b||b.status!=='draft')throw Error('目前批次不能開始計時');const ts=now();await transact([{store:'batches',kind:'put',value:{...b,status:'roasting',chargeTime:ts,updatedAt:ts}},{store:'events',kind:'put',value:{id:uid(),roastId:b.id,eventType:'charge',elapsedSeconds:0,recordedAt:ts,beanTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:ts,updatedAt:ts}}]);navigate('live',{batchId:b.id});break;}
+ case 'start-draft':navigate('live',{batchId:el.dataset.id});break;
  case 'tab':S.tab=el.dataset.tab;await render();break;
  case 'event':await eventAdd(el.dataset.type);break;
  case 'edit-batch':S.modal={store:'batches',id:el.dataset.id};await render();break;
@@ -197,16 +240,25 @@ function updateSearchControls(el){S[el.dataset.search]=el.value;const key=el.dat
        if(S.filter==='done'&&b.status!=='completed')return false;
        if(S.dateFrom&&b.roastDateTime<new Date(S.dateFrom+'T00:00:00').getTime())return false;
        if(S.dateTo&&b.roastDateTime>new Date(S.dateTo+'T23:59:59').getTime())return false;
-       const parts=[b.productName,b.batchCode,b.dropReason,b.colorDescription,b.notes];for(const s of ['inputs','events','tests','feedback'])for(const r of recordCache[s].filter(x=>x.roastId===b.id))parts.push(...Object.values(r).filter(x=>typeof x==='string'));return parts.some(x=>String(x||'').toLowerCase().includes(q));
+       const parts=[b.productName,b.batchCode,b.dropReason,b.colorDescription,b.resultObservation,b.notes];for(const s of ['inputs','events','tests','feedback'])for(const r of recordCache[s].filter(x=>x.roastId===b.id))parts.push(...Object.values(r).filter(x=>typeof x==='string'));return parts.some(x=>String(x||'').toLowerCase().includes(q));
      }).sort((a,b)=>b.roastDateTime-a.roastDateTime);
      box.innerHTML=candidates.length?candidates.map(cardBatch).join(''):empty('找不到符合條件的批次');}
  }else render();}
 document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(el){e.preventDefault();takeAction(el).catch(err=>{console.error(err);notify(err.message||'操作失敗',true);});}});
-document.addEventListener('submit',e=>{if(e.target.id==='new-roast'){e.preventDefault();const submitter=e.submitter;createRoast(e.target,submitter?.value==='draft'?'draft':'start').catch(err=>notify(err.message,true));}});
+document.addEventListener('submit',e=>{if(e.target.id==='new-roast'){e.preventDefault();createRoast(e.target).catch(err=>notify(err.message,true));}});
 document.addEventListener('input',e=>{const el=e.target;if(el.dataset.search)updateSearchControls(el);if(el.dataset.field){const wrap=el.closest('[data-recordstore]');if(wrap)queueField(wrap.dataset.recordstore,wrap.dataset.recordid,el.dataset.field,el.value);}});
 document.addEventListener('change',e=>{const el=e.target;if(el.dataset.upload){handleUploaded(el.dataset.upload,el.files?.[0]).catch(err=>{console.error(err);notify(err.message||'檔案處理失敗',true);});el.value='';}else if(el.dataset.photos){addPhotos(el.dataset.photos,el.dataset.id,Array.from(el.files||[])).catch(err=>{console.error(err);notify(err.message||'附件處理失敗',true);});el.value='';}else if(el.dataset.clean){el.checked?S.cleanupIds.add(el.dataset.clean):S.cleanupIds.delete(el.dataset.clean);S.cleanupVerified=false;render();}else if(el.dataset.field){const wrap=el.closest('[data-recordstore]');if(wrap)queueField(wrap.dataset.recordstore,wrap.dataset.recordid,el.dataset.field,el.value);}});
 document.addEventListener('focusout',e=>{if(e.target.dataset.field){const w=e.target.closest('[data-recordstore]');if(w)flushKey(`${w.dataset.recordstore}/${w.dataset.recordid}`).catch(err=>notify(err.message,true));}});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushAll().catch(e=>console.error('Background save failed',e));});
 window.addEventListener('pagehide',()=>{flushAll().catch(e=>console.error('Exit save failed',e));});
 setInterval(tick,1000);
-(async()=>{try{await openDb();const data=await dump();const active=data.batches.filter(b=>b.status==='roasting').sort((a,b)=>b.chargeTime-a.chargeTime)[0];if(active){S.page='live';S.batchId=active.id;}if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW registration:',e));await render();}catch(e){console.error(e);root.innerHTML=`<div class="content"><div class="notice error-notice">無法開啟本機資料庫：${esc(e.message)}。請確認使用 HTTPS 或 localhost，並允許瀏覽器儲存資料。</div></div>`;}})();
+async function migrateLegacyDropNotes(){
+ const data=await dump(),actions=[];
+ for(const b of data.batches){
+   if(!b.dropReason)continue;
+   const old=data.events.find(e=>e.roastId===b.id&&e.eventType==='drop'&&!e.note&&!e.noteMigratedV12);
+   if(old)actions.push({store:'events',kind:'put',value:{...old,note:b.dropReason,noteMigratedV12:true}});
+ }
+ if(actions.length)await transact(actions,{markModified:false});
+}
+(async()=>{try{await openDb();await migrateLegacyDropNotes();const data=await dump();const active=data.batches.filter(b=>b.status==='roasting').sort((a,b)=>b.chargeTime-a.chargeTime)[0];if(active){S.page='live';S.batchId=active.id;}if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW registration:',e));await render();}catch(e){console.error(e);root.innerHTML=`<div class="content"><div class="notice error-notice">無法開啟本機資料庫：${esc(e.message)}。請確認使用 HTTPS 或 localhost，並允許瀏覽器儲存資料。</div></div>`;}})();

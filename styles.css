@@ -4,3 +4,23 @@
 .start-roast-button{min-height:68px;width:100%;justify-content:flex-start;padding:19px 20px;border:1px solid #d8d8d8;border-radius:14px;background:#ffffff;color:#171717;font-size:17px;font-weight:650;letter-spacing:-.02em;box-shadow:none}
 .start-roast-button:hover{background:#f3f3f3;border-color:#bcbcbc}
 .start-roast-button:focus-visible{outline:2px solid #282828;outline-offset:3px}
+
+/* v1.2: a single vertical, chronological interaction rail for roasting. */
+.milestone-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;background:#fff;padding:8px 12px}
+.milestone-row{position:relative;display:flex;align-items:center;gap:11px;min-height:54px}
+.milestone-row:not(:last-child)::before{content:"";position:absolute;left:13px;top:30px;bottom:-24px;width:1px;background:#cfcfcf}
+.milestone-track{flex:0 0 27px;width:27px;align-self:stretch;display:flex;align-items:center;justify-content:center;z-index:1}
+.milestone-dot{width:17px;height:17px;display:flex;align-items:center;justify-content:center;border-radius:50%;border:1.5px solid #b7b7b7;background:#fff;color:#fff;font-size:10px;line-height:1}
+.milestone-row.done .milestone-dot{background:#292929;border-color:#292929}
+.milestone-row.next .milestone-dot{border-color:#292929;border-width:2px}
+.milestone-title{flex:1;min-width:0;font-size:14px;font-weight:600;color:#252525}
+.milestone-row.pending .milestone-title{color:#6d6d6d}
+.milestone-record{flex:0 0 auto;min-width:76px;min-height:40px;padding:7px 10px;border:1px solid #d5d5d5;border-radius:9px;background:#fafafa;color:#262626;font-size:12px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+.milestone-record.done-time{background:transparent;border-color:transparent;color:#555;font-weight:550;text-align:right}
+.milestone-record.done-time span{margin-left:4px;color:#9a9a9a}
+.milestone-record:disabled{opacity:.35;background:#f8f8f8}
+.milestone-record:focus-visible,.special-chip:focus-visible{outline:2px solid #242424;outline-offset:2px}
+.special-actions{display:flex;flex-wrap:wrap;gap:8px}
+.special-chip{min-height:42px;padding:9px 13px;border:1px solid #d7d7d7;border-radius:10px;background:#fff;color:#282828;font-size:13px;font-weight:600}
+.special-chip:disabled{opacity:.35}
+@media(max-width:380px){.milestone-list{padding:7px 9px}.milestone-row{gap:8px}.milestone-record{min-width:73px;padding:7px}.special-chip{padding:9px 11px}}
