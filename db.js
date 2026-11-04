@@ -1,13 +1,13 @@
-export const STORES=['batches','inputs','events','tests','feedback','attachments'];
+export const STORES=['batches','inputs','events','tests','feedback','attachments','greenLots'];
 const DBNAME='roastlog-personal-v1';
 let dbPromise;
 export function openDb(){
   if(dbPromise) return dbPromise;
   dbPromise=new Promise((resolve,reject)=>{
-    const req=indexedDB.open(DBNAME,1);
+    const req=indexedDB.open(DBNAME,2);
     req.onupgradeneeded=()=>{
       const db=req.result;
-      for(const name of STORES){if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name!=='batches' && name!=='attachments')store.createIndex('roastId','roastId',{unique:false});}}
+      for(const name of STORES){if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name!=='batches' && name!=='attachments' && name!=='greenLots')store.createIndex('roastId','roastId',{unique:false});}}
       if(!db.objectStoreNames.contains('settings'))db.createObjectStore('settings',{keyPath:'key'});
     };
     req.onsuccess=()=>{const db=req.result;db.onversionchange=()=>db.close();resolve(db);};

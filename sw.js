@@ -1,4 +1,4 @@
-const CACHE = 'roastlog-shell-v1-2';
+const CACHE = 'roastlog-shell-v1-3';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './db.js', './archive.js', './vendor/jszip.min.js', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(Promise.all([caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))), self.clients.claim()])); });

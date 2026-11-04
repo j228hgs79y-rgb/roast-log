@@ -1,11 +1,11 @@
 import {openDb,uid,getAll,getOne,write,erase,transact,dump,setting,setSetting,removeBatches} from './db.js';
 import {subset,createZip,parseZip,restoreZip,archiveMatchesCurrent,formatSize} from './archive.js';
 const root=document.getElementById('app');
-const S={page:'home',batchId:null,tab:'overview',modal:null,query:'',dateFrom:'',dateTo:'',filter:'all',archive:null,archiveId:null,archiveQuery:'',cleanupIds:new Set(),cleanupVerified:false,cleanupInitialized:false,lastZip:null};
+const S={page:'home',batchId:null,lotId:null,lotQuery:'',tab:'overview',modal:null,query:'',dateFrom:'',dateTo:'',filter:'all',archive:null,archiveId:null,archiveQuery:'',cleanupIds:new Set(),cleanupVerified:false,cleanupInitialized:false,lastZip:null};
 let pendingSave=new Map(), toastTimer, renderToken=0, recordCache=null;
-const LABELS={charge:'入豆',turn:'回溫點',t140:'豆溫 140°C',t155:'豆溫 155°C／轉黃觀察',t170:'豆溫 170°C',crack:'一爆開始',crack2:'二爆開始',drop:'下豆',gas:'燃料調整',air:'風門調整',sample:'豆況檢查',other:'其他事件'};
-const MILESTONE_TYPES=['charge','turn','t140','t155','t170','crack','crack2','drop'];
-const MILESTONE_NAMES={charge:'入豆',turn:'回溫點',t140:'140°C',t155:'155°C',t170:'170°C',crack:'一爆',crack2:'二爆',drop:'下豆'};
+const LABELS={charge:'入豆',turn:'回溫點',t140:'豆溫 140°C',t155:'豆溫 155°C／轉黃觀察',t170:'豆溫 170°C',crack:'一爆開始',crackEnd:'一爆結束',crack2:'二爆開始',drop:'下豆',gas:'燃料調整',air:'風門調整',sample:'豆況檢查',other:'其他事件'};
+const MILESTONE_TYPES=['charge','turn','t140','t155','t170','crack','crackEnd','crack2','drop'];
+const MILESTONE_NAMES={charge:'入豆',turn:'回溫點',t140:'140°C',t155:'155°C',t170:'170°C',crack:'一爆開始',crackEnd:'一爆結束',crack2:'二爆',drop:'下豆'};
 const SPECIAL_TYPES=[['gas','燃料'],['air','風門'],['sample','豆況檢查'],['other','其他事件']];
 const now=()=>Date.now();
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -19,7 +19,7 @@ const num=v=>v===''||v===null||v===undefined?null:Number(v);
 const notify=(message,isError=false)=>{const x=document.getElementById('toast');x.textContent=message;x.style.background=isError?'#444444':'#202020';x.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>x.classList.remove('show'),3200);};
 function status(text='本機已儲存'){const el=document.querySelector('#save-state');if(el)el.textContent=text;}
 function topbar(label='Roast Log'){return `<header class="topbar"><div class="brand"><div class="mark">◒</div><div><div class="strong">${esc(label)}</div><div class="sub">個人咖啡烘焙紀錄</div></div></div><span class="pill" id="save-state">本機已儲存</span></header>`;}
-function nav(){return `<nav class="nav"><div class="nav-inner">${[['home','⌂','首頁'],['search','⌕','查詢'],['data','▤','資料']].map(([k,ico,t])=>`<button class="${S.page===k?'active':''}" data-action="goto" data-page="${k}"><span class="nav-glyph">${ico}</span>${t}</button>`).join('')}</div></nav>`;}
+function nav(){return `<nav class="nav"><div class="nav-inner">${[['home','⌂','首頁'],['search','⌕','查詢'],['lots','◉','生豆'],['data','▤','資料']].map(([k,ico,t])=>`<button class="${S.page===k?'active':''}" data-action="goto" data-page="${k}"><span class="nav-glyph">${ico}</span>${t}</button>`).join('')}</div></nav>`;}
 const btn=(title,action,cls='btn',extra='')=>`<button class="${cls}" data-action="${action}" ${extra}>${title}</button>`;
 const empty=msg=>`<div class="empty">${esc(msg)}</div>`;
 const mini=arr=>arr.filter(Boolean).join(' · ');
@@ -40,6 +40,23 @@ function home(data){const batches=[...data.batches].sort((a,b)=>b.roastDateTime-
  <div class="section-header"><h2>最近的烘焙</h2><button class="muted-link small" data-action="goto" data-page="search">查看全部 →</button></div>
  ${batches.length?batches.slice(0,6).map(cardBatch).join(''):empty('還沒有烘焙紀錄。新增第一鍋後會顯示在這裡。')}
  </div>`;}
+function lotTitle(lot){return `${lot.name||'未命名生豆'}${lot.code?' · '+lot.code:''}`;}
+function linkedLot(input,data){return (data.greenLots||[]).find(l=>l.id===input.greenLotId);}
+function lotOptions(data,selected='',extra=false){
+  const lots=[...(data.greenLots||[])].sort((a,b)=>lotTitle(a).localeCompare(lotTitle(b),'zh-Hant'));
+  return `<option value="" ${selected===''?'selected':''}>不選擇生豆批次</option>${lots.map(l=>`<option value="${esc(l.id)}" ${l.id===selected?'selected':''}>${esc(lotTitle(l))}</option>`).join('')}${extra?`<option value="__new__">＋ 新增生豆批次</option>`:''}`;
+}
+function lotsPage(data){
+ const q=S.lotQuery.trim().toLowerCase();const lots=[...(data.greenLots||[])].sort((a,b)=>a.name.localeCompare(b.name,'zh-Hant')).filter(l=>`${l.name} ${l.code||''} ${l.notes||''}`.toLowerCase().includes(q));
+ return `<div class="content stack"><div class="row between"><h1>生豆批次</h1>${btn('＋ 新增','add-lot','btn smallbtn')}</div><input class="search-input" type="search" data-search="lotQuery" value="${esc(S.lotQuery)}" placeholder="搜尋生豆名稱或批次編號"><div class="stack" id="lot-results">${lots.length?lots.map(l=>`<button class="roastline" data-action="lot-open" data-id="${esc(l.id)}"><div><div class="title">${esc(l.name)}</div><div class="details">批次：${esc(l.code||'未填')} · ${(data.inputs||[]).filter(i=>i.greenLotId===l.id).length} 筆使用紀錄</div></div><span class="arrow">›</span></button>`).join(''):empty('尚無生豆批次。可新增後在建立烘焙時直接選擇。')}</div></div>`;
+}
+function lotDetail(data){
+ const lot=(data.greenLots||[]).find(l=>l.id===S.lotId);if(!lot)return lotsPage(data);
+ const inputs=(data.inputs||[]).filter(i=>i.greenLotId===lot.id),byBatch=new Map();for(const x of inputs){const list=byBatch.get(x.roastId)||[];list.push(x);byBatch.set(x.roastId,list);}
+ const batches=data.batches.filter(b=>byBatch.has(b.id)).sort((a,b)=>b.roastDateTime-a.roastDateTime);
+ const total=inputs.reduce((n,i)=>n+(Number.isFinite(i.inputWeight)?i.inputWeight:0),0);
+ return `<div class="content stack"><div class="topnav"><button class="back" data-action="goto" data-page="lots">‹</button><div style="flex:1"><h2>${esc(lot.name)}</h2><div class="small muted">批次 ${esc(lot.code||'未填')}</div></div>${btn('編輯','edit','btn smallbtn',`data-store="greenLots" data-id="${lot.id}"`)}</div>${lot.notes?`<div class="card text-block">${nl(lot.notes)}</div>`:''}<div class="metric-row"><div class="metric"><strong>${batches.length}</strong><span>使用此生豆的烘焙批次</span></div><div class="metric"><strong>${inputs.length}</strong><span>原料投入紀錄</span></div><div class="metric"><strong>${(total/1000).toFixed(2)}kg</strong><span>累計已記錄投入</span></div></div><div class="section-header"><h2>相關烘焙紀錄</h2></div>${batches.length?batches.map(b=>`<button class="roastline" data-action="open" data-id="${b.id}"><div><strong>${esc(b.productName)}</strong><div class="details">${esc(b.batchCode)} · ${dstr(b.roastDateTime)} · 投入 ${byBatch.get(b.id).reduce((n,i)=>n+(Number.isFinite(i.inputWeight)?i.inputWeight:0),0)}g</div></div><span class="arrow">›</span></button>`).join(''):empty('尚未使用此生豆批次烘焙。')}</div>`;
+}
 function live(b,data){
  const events=byRoast(data,'events',b.id),running=b.status==='roasting',draft=b.status==='draft';
  const gap=running&&b.chargeTime?Math.floor((now()-b.chargeTime)/1000):0;
@@ -62,14 +79,14 @@ function live(b,data){
  <div class="section-header"><h2>批次資料</h2>${btn('編輯批次','edit-batch','btn smallbtn',`data-id="${b.id}"`)}</div>
  </div>`;
 }
-function timeline(events,readOnly=false){if(!events.length)return empty('尚未記錄事件。');return `<div class="card">${events.map(e=>`<div class="list-item"><span class="time">${elapsed(e.elapsedSeconds)}</span><span class="dot"></span><div class="event-body"><div class="row between"><strong>${esc(LABELS[e.eventType]||e.eventType)}</strong>${!readOnly?`<button class="muted-link small" data-action="edit" data-store="events" data-id="${e.id}">編輯</button>`:''}</div><p>${esc(mini([e.beanTemperature!=null?`${e.beanTemperature}°C`:null,e.gasPressure?`瓦斯 ${e.gasPressure}`:null,e.airflowSetting?`風門 ${e.airflowSetting}`:null,e.note]))||'已記錄時間'}</p></div></div>`).join('')}</div>`;}
+function timeline(events,readOnly=false){if(!events.length)return empty('尚未記錄事件。');return `<div class="card">${events.map(e=>`<div class="list-item"><span class="time">${elapsed(e.elapsedSeconds)}</span><span class="dot"></span><div class="event-body"><div class="row between"><strong>${esc(LABELS[e.eventType]||e.eventType)}</strong>${!readOnly?`<button class="muted-link small" data-action="edit" data-store="events" data-id="${e.id}">編輯</button>`:''}</div><p>${esc(mini([e.beanTemperature!=null?`${e.beanTemperature}°C`:null,e.gasPressure?`${e.eventType==='charge'?'初始火力':'火力'} ${e.gasPressure}`:null,e.initialAirTemperature!=null?`初始風溫 ${e.initialAirTemperature}°C`:null,e.initialDrumTemperature!=null?`初始爐溫 ${e.initialDrumTemperature}°C`:null,e.airflowSetting?`風門 ${e.airflowSetting}`:null,e.note]))||'已記錄時間'}</p></div></div>`).join('')}</div>`;}
 function detail(b,data,archive=false){const inputs=byRoast(data,'inputs',b.id),ev=byRoast(data,'events',b.id),tests=byRoast(data,'tests',b.id),fb=byRoast(data,'feedback',b.id);const readonly=archive;const total=totalGram(inputs);return `<div class="content stack"><div class="topnav"><button class="back" data-action="goto" data-page="${archive?'archive':'search'}">‹</button><div style="flex:1"><h2>${esc(b.productName)}</h2><div class="small muted">${esc(b.batchCode)} · ${dstr(b.roastDateTime)}</div></div>${!readonly?btn('編輯','edit-batch','btn smallbtn',`data-id="${b.id}"`):'<span class="pill">封存唯讀</span>'}</div>
  <div class="metric-row"><div class="metric"><span>入豆重量</span><strong>${total?`${(total/1000).toFixed(2)}kg`:'—'}</strong></div><div class="metric"><span>熟豆重量</span><strong>${b.roastedWeight!=null?`${(b.roastedWeight/1000).toFixed(2)}kg`:'—'}</strong></div><div class="metric"><span>失重率</span><strong>${lost(b,inputs)}</strong></div></div>
  ${b.status==='roasting'&&!readonly?btn('繼續烘焙計時 →','resume','btn primary full',`data-id="${b.id}"`):''}${b.status==='draft'&&!readonly?btn('開啟操作頁（尚未入豆）','resume','btn primary full',`data-id="${b.id}"`):''}
  ${b.status==='completed'&&!readonly?btn('已完成 · 備份到 iCloud','backup','btn secondary full'):''}
  <div class="tabs">${[['overview','總覽'],['roast','烘焙'],['tests',`測試 ${tests.length}`],['feedback',`回饋 ${fb.length}`]].map(([key,t])=>`<button class="${S.tab===key?'active':''}" data-action="tab" data-tab="${key}">${t}</button>`).join('')}</div>
- ${S.tab==='overview'?`<div class="section-header"><h2>原料</h2>${!readonly?btn('＋ 新增原料','add-child','btn smallbtn',`data-store="inputs" data-roast="${b.id}"`):''}</div>${inputs.length?inputs.map(x=>`<div class="card"><div class="row between"><strong>${esc(x.greenBeanName||'未命名生豆')}</strong>${!readonly?btn('編輯','edit','btn smallbtn',`data-store="inputs" data-id="${x.id}"`):''}</div><div class="small muted">批次 ${esc(x.greenLotCode||'未紀錄')} · ${x.inputWeight!=null?`${x.inputWeight}g`:'重量未紀錄'}</div>${x.conditionNotes?`<p class="text-block" style="margin-top:10px">${nl(x.conditionNotes)}</p>`:''}</div>`).join(''):empty('尚未記錄原料')}
- <div class="section-header"><h2>下豆結果</h2>${!readonly?btn('編輯','edit-batch','btn smallbtn',`data-id="${b.id}"`):''}</div><div class="card stack">${vrow('烘焙時間',elapsed(ev.find(x=>x.eventType==='drop')?.elapsedSeconds))}${vrow('一爆至下豆',(()=>{let a=ev.find(x=>x.eventType==='crack'),d=ev.find(x=>x.eventType==='drop');return a&&d?elapsed(d.elapsedSeconds-a.elapsedSeconds):'—';})())}${vrow('DTR',dtr(b,ev)||'—')}${vrow('色度',b.colorDescription||'未紀錄')}${vrow('下豆判斷',ev.find(x=>x.eventType==='drop')?.note || (ev.some(x=>x.eventType==='drop')?'未紀錄':(b.dropReason||'未紀錄')))}${vrow('烘焙成果觀察',b.resultObservation||'未紀錄')}${b.notes?`<div class="divider"></div><div class="text-block">其他備註：${nl(b.notes)}</div>`:''}${photoHtml(b,S.archive?.data||data)}</div>
+ ${S.tab==='overview'?`<div class="section-header"><h2>原料</h2>${!readonly?btn('＋ 新增原料','add-child','btn smallbtn',`data-store="inputs" data-roast="${b.id}"`):''}</div>${inputs.length?inputs.map(x=>`<div class="card"><div class="row between"><strong>${esc(x.greenBeanName||'未命名生豆')}</strong>${!readonly?btn('編輯','edit','btn smallbtn',`data-store="inputs" data-id="${x.id}"`):''}</div><div class="small muted">批次 ${esc(x.greenLotCode||'未紀錄')} · ${x.inputWeight!=null?`${x.inputWeight}g`:'重量未紀錄'}</div>${!readonly&&linkedLot(x,data)?`<button class="muted-link small" data-action="lot-open" data-id="${x.greenLotId}">查看這批生豆的烘焙紀錄 ›</button>`:''}${x.conditionNotes?`<p class="text-block" style="margin-top:10px">${nl(x.conditionNotes)}</p>`:''}</div>`).join(''):empty('尚未記錄原料')}
+ <div class="section-header"><h2>下豆結果</h2>${!readonly?btn('編輯','edit-batch','btn smallbtn',`data-id="${b.id}"`):''}</div><div class="card stack">${vrow('烘焙時間',elapsed(ev.find(x=>x.eventType==='drop')?.elapsedSeconds))}${vrow('一爆至下豆',(()=>{let a=ev.find(x=>x.eventType==='crack'),d=ev.find(x=>x.eventType==='drop');return a&&d?elapsed(d.elapsedSeconds-a.elapsedSeconds):'—';})())}${vrow('DTR',dtr(b,ev)||'—')}${vrow('一爆持續時間',(()=>{const a=ev.find(x=>x.eventType==='crack'),z=ev.find(x=>x.eventType==='crackEnd');return a&&z&&z.elapsedSeconds>=a.elapsedSeconds?elapsed(z.elapsedSeconds-a.elapsedSeconds):'—';})())}${vrow('色度',b.colorDescription||'未紀錄')}${vrow('下豆判斷',ev.find(x=>x.eventType==='drop')?.note || (ev.some(x=>x.eventType==='drop')?'未紀錄':(b.dropReason||'未紀錄')))}${vrow('烘焙成果觀察',b.resultObservation||'未紀錄')}${b.notes?`<div class="divider"></div><div class="text-block">其他備註：${nl(b.notes)}</div>`:''}${photoHtml(b,S.archive?.data||data)}</div>
  <div class="metric-row"><button class="metric" data-action="tab" data-tab="roast"><strong>${ev.length}</strong><span>烘焙事件 ›</span></button><button class="metric" data-action="tab" data-tab="tests"><strong>${tests.length}</strong><span>個人測試 ›</span></button><button class="metric" data-action="tab" data-tab="feedback"><strong>${fb.length}</strong><span>外部回饋 ›</span></button></div>`:''}
  ${S.tab==='roast'?`<div class="section-header"><h2>烘焙時間軸</h2>${!readonly?btn('＋ 補登事件','add-event','btn smallbtn',`data-id="${b.id}"`):''}</div>${timeline(ev,readonly)}`:''}
  ${S.tab==='tests'?`<div class="section-header"><h2>個人測試</h2>${!readonly?btn('＋ 新增測試','add-child','btn smallbtn',`data-store="tests" data-roast="${b.id}"`):''}</div>${tests.length?tests.map(t=>textCard(t,'tests',readonly)).join(''):empty('尚未有個人測試。可在任何日期補登。')}`:''}
@@ -110,25 +127,46 @@ function archivePage(){
 function modalBody(data){if(!S.modal)return '';const {store,id}=S.modal;const record=store==='batches'?data.batches.find(x=>x.id===id):data[store]?.find(x=>x.id===id);if(!record)return '';let fields='';let heading='';
  if(store==='batches'){
    heading='編輯烘焙批次';fields=`${field('咖啡品項／配方','productName',record.productName)}${field('批次編號','batchCode',record.batchCode)}${dateFld('烘焙日期時間','roastDateTime',record.roastDateTime)}${field('熟豆重量（g）','roastedWeight',record.roastedWeight??'','number','step="any"')}${field('色度（數字或文字均可）','colorDescription',record.colorDescription||'')}${field('烘焙成果觀察','resultObservation',record.resultObservation||'','text','',true)}${record.notes?field('其他備註（舊版紀錄）','notes',record.notes,'text','',true):''}`;
+ }else if(store==='greenLots'){
+   heading='生豆批次';fields=`${field('生豆名稱','name',record.name||'')}${field('批次編號','code',record.code||'')}${field('原料備註','notes',record.notes||'','text','',true)}`;
  }else if(store==='inputs'){
-   heading='生豆投入與豆況';fields=`${field('生豆名稱','greenBeanName',record.greenBeanName||'')}${field('生豆批次','greenLotCode',record.greenLotCode||'')}${field('投入重量（g，可留空）','inputWeight',record.inputWeight??'','number','step="any"')}${field('特殊豆況備註','conditionNotes',record.conditionNotes||'','text','',true)}`;
+   const lot=linkedLot(record,data);
+   heading='生豆投入與豆況';fields=`<div class="field"><label>選擇已建立的生豆批次</label><select data-lot-input="${record.id}">${lotOptions(data,record.greenLotId||'')}</select></div>${lot?`<div class="form-note">目前關聯：${esc(lotTitle(lot))}。名稱及批號可在「生豆」頁面修改。</div>`:`${field('生豆名稱（舊資料／未關聯）','greenBeanName',record.greenBeanName||'')}${field('生豆批次編號（舊資料／未關聯）','greenLotCode',record.greenLotCode||'')}`}<div class="field"><span class="small muted">若需要新的批次，可先到「生豆」頁面新增，再回來選取。</span></div>${field('投入重量（g，可留空）','inputWeight',record.inputWeight??'','number','min="0" step="any"')}${field('本次特殊豆況備註','conditionNotes',record.conditionNotes||'','text','',true)}`;
  }else if(store==='events'){
-   heading=LABELS[record.eventType]||'烘焙事件';fields=`${MILESTONE_TYPES.includes(record.eventType)?'':select('事件種類','eventType',SPECIAL_TYPES,record.eventType)}${field('經過時間（分:秒）','elapsedSeconds',elapsed(record.elapsedSeconds),'text','inputmode="numeric" placeholder="08:30"')}${field('豆溫（°C）','beanTemperature',record.beanTemperature??'','number','step="any"')}${(record.eventType==='gas'||record.gasPressure)?field('瓦斯壓力／刻度','gasPressure',record.gasPressure||''):''}${(record.eventType==='air'||record.airflowSetting)?field('風門位置／刻度','airflowSetting',record.airflowSetting||''):''}${field(record.eventType==='t155'?'155°C 時轉黃程度':record.eventType==='drop'?'下豆判斷標準':'觀察、操作或備註','note',record.note||'','text','',true)}`;
+   const fireEvents=(data.events||[]).filter(e=>e.roastId===record.roastId&&e.id!==record.id&&e.gasPressure!==''&&e.gasPressure!=null&&(e.elapsedSeconds||0)<=(record.elapsedSeconds||0)).sort((a,b)=>b.elapsedSeconds-a.elapsedSeconds);
+   const prevFire=fireEvents[0]?.gasPressure;
+   heading=LABELS[record.eventType]||'烘焙事件';fields=`${MILESTONE_TYPES.includes(record.eventType)?'':select('事件種類','eventType',SPECIAL_TYPES,record.eventType)}${field('經過時間（分:秒）','elapsedSeconds',elapsed(record.elapsedSeconds),'text','inputmode="numeric" placeholder="08:30"')}${record.eventType==='charge'?`${field('初始風溫（°C）','initialAirTemperature',record.initialAirTemperature??'','number','step="any"')}${field('初始爐溫（°C）','initialDrumTemperature',record.initialDrumTemperature??'','number','step="any"')}${field('初始火力／瓦斯壓力','gasPressure',record.gasPressure??'')}${record.beanTemperature!=null?field('入豆豆溫（舊紀錄，可選填）','beanTemperature',record.beanTemperature,'number','step="any"'):''}`:`${field('豆溫（°C）','beanTemperature',record.beanTemperature??'','number','step="any"')}${(MILESTONE_TYPES.includes(record.eventType)||record.eventType==='gas'||record.gasPressure)?`${field(record.eventType==='gas'?'火力／瓦斯壓力（調整後）':'火力調整後設定值（選填）','gasPressure',record.gasPressure??'')}${prevFire!=null?`<div class="small muted">前一筆火力設定：${esc(prevFire)}（未調整可留空）</div>`:''}`:''}`} ${(record.eventType==='air'||record.airflowSetting)?field('風門位置／刻度','airflowSetting',record.airflowSetting||''):''}${field(record.eventType==='t155'?'155°C 時轉黃程度':record.eventType==='drop'?'下豆判斷標準':'觀察、操作或備註','note',record.note||'','text','',true)}`;
  }else if(store==='tests'){
    heading='個人測試／杯測';fields=`${dateFld('測試日期','testDate',record.testDate)}${select('測試類型','testType',[['杯測','杯測'],['沖煮','沖煮'],['其他','其他']],record.testType)}${field('測試方法／項目','testMethod',record.testMethod||'','text','',true)}${field('測試條件','testConditions',record.testConditions||'','text','',true)}${field('觀察與結果','observations',record.observations||'','text','',true)}${field('我的判斷／結論','conclusion',record.conclusion||'','text','',true)}`;
  }else if(store==='feedback'){
    heading='客戶／同仁回饋';fields=`${dateFld('回饋日期','feedbackDate',record.feedbackDate)}${select('來源','sourceType',[['客戶','客戶'],['現場同仁','現場同仁'],['其他','其他']],record.sourceType)}${field('回饋者','sourceName',record.sourceName||'')}${field('對方原始回饋','feedbackContent',record.feedbackContent||'','text','',true)}${field('相關使用條件','conditions',record.conditions||'','text','',true)}${field('我的分析（與原始回饋分開）','myAnalysis',record.myAnalysis||'','text','',true)}${field('後續處理','followUp',record.followUp||'','text','',true)}`;
  }
- return `<div class="modal-wrap" id="modal-wrap"><div class="modal" role="dialog" aria-modal="true" aria-label="${esc(heading)}"><div class="modal-head"><h2>${esc(heading)}</h2><button class="btn smallbtn" data-action="close-modal">完成</button></div><div class="form-stack" data-recordstore="${store}" data-recordid="${id}"><div class="form-note">輸入後自動存到本機；不需要另按儲存。可稍後繼續補登。</div>${fields}${store!=='inputs'?`<div class="field"><label>照片／附件（可選）</label><input class="file-input" type="file" accept="image/*" multiple data-photos="${store}" data-id="${id}"></div>${photoHtml(record,data)}${(record.attachmentIds||[]).length?`<div class="row wrap">${record.attachmentIds.map(aid=>btn('移除照片','delete-photo','btn warning smallbtn',`data-store="${store}" data-id="${id}" data-aid="${aid}"`)).join('')}</div>`:''}`:''}<div class="row between"><span id="modal-save-state" class="small muted">本機已儲存</span>${store==='events'&&record.eventType==='charge'?'':btn('刪除這筆紀錄','delete-record','btn warning smallbtn',`data-store="${store}" data-id="${id}"`)}</div></div></div></div>`;
+ return `<div class="modal-wrap" id="modal-wrap"><div class="modal" role="dialog" aria-modal="true" aria-label="${esc(heading)}"><div class="modal-head"><h2>${esc(heading)}</h2><button class="btn smallbtn" data-action="close-modal">完成</button></div><div class="form-stack" data-recordstore="${store}" data-recordid="${id}"><div class="form-note">輸入後自動存到本機；不需要另按儲存。可稍後繼續補登。</div>${fields}${store!=='inputs'&&store!=='greenLots'?`<div class="field"><label>照片／附件（可選）</label><input class="file-input" type="file" accept="image/*" multiple data-photos="${store}" data-id="${id}"></div>${photoHtml(record,data)}${(record.attachmentIds||[]).length?`<div class="row wrap">${record.attachmentIds.map(aid=>btn('移除照片','delete-photo','btn warning smallbtn',`data-store="${store}" data-id="${id}" data-aid="${aid}"`)).join('')}</div>`:''}`:''}<div class="row between"><span id="modal-save-state" class="small muted">本機已儲存</span>${(store==='greenLots'||store==='events'&&record.eventType==='charge')?'':btn('刪除這筆紀錄','delete-record','btn warning smallbtn',`data-store="${store}" data-id="${id}"`)}</div></div></div></div>`;
 }
 async function render(){const token=++renderToken;let data=await load();if(token!==renderToken)return;recordCache=data;recordCache.lastModifiedAt=await setting('lastModifiedAt',0);recordCache.lastBackupConfirmedAt=await setting('lastBackupConfirmedAt',0);
- let page='';if(S.page==='home')page=home(data);else if(S.page==='live'){const b=data.batches.find(x=>x.id===S.batchId);page=b?live(b,data):home(data);}else if(S.page==='detail'){const b=data.batches.find(x=>x.id===S.batchId);page=b?detail(b,data):search(data);}else if(S.page==='search')page=search(data);else if(S.page==='data')page=dataPage(data);else if(S.page==='archive')page=archivePage();else if(S.page==='archive-detail'){const b=S.archive?.data.batches.find(x=>x.id===S.archiveId);page=b?detail(b,S.archive.data,true):archivePage();}
+ let page='';if(S.page==='home')page=home(data);else if(S.page==='live'){const b=data.batches.find(x=>x.id===S.batchId);page=b?live(b,data):home(data);}else if(S.page==='detail'){const b=data.batches.find(x=>x.id===S.batchId);page=b?detail(b,data):search(data);}else if(S.page==='search')page=search(data);else if(S.page==='lots')page=lotsPage(data);else if(S.page==='lot-detail')page=lotDetail(data);else if(S.page==='data')page=dataPage(data);else if(S.page==='archive')page=archivePage();else if(S.page==='archive-detail'){const b=S.archive?.data.batches.find(x=>x.id===S.archiveId);page=b?detail(b,S.archive.data,true):archivePage();}
  root.innerHTML=topbar()+page+nav()+modalBody(data);tick();}
 function tick(){const el=document.getElementById('live-timer');if(el?.dataset.start){const start=Number(el.dataset.start);el.textContent=elapsed((now()-start)/1000);}}
 function navigate(page,more={}){Object.assign(S,{page,...more});S.modal=null;window.scrollTo({top:0,behavior:'instant'});render();}
 function nextCode(batches,dateMs){const d=localDt(dateMs).slice(0,10).replaceAll('-','');let next=1;for(const b of batches){const m=b.batchCode.match(new RegExp(`^${d}-(\\d+)$`));if(m)next=Math.max(next,Number(m[1])+1);}return `${d}-${String(next).padStart(2,'0')}`;}
-function newForm(){const date=localDt(now());return `<div class="modal-wrap"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>新增烘焙批次</h2><button class="btn smallbtn" data-action="close-modal">取消</button></div><form id="new-roast" class="form-stack"><div class="field"><label>咖啡品項／配方（必填）</label><input name="product" required autofocus placeholder="例如：肯亞 AA Top"></div><div class="field"><label>生產日期時間</label><input name="date" type="datetime-local" value="${date}" required></div><div class="field"><label>生豆批次（選填，可後補多種）</label><input name="lot" placeholder="例如：KEN-2026-07"></div><div class="field"><label>入豆重量（g，選填）</label><input name="weight" type="number" min="0" step="any" placeholder="例如：6000"></div><div class="field"><label>特殊豆況（選填）</label><textarea name="condition" placeholder="可預先記錄原料觀察"></textarea></div><div class="form-note">建立批次後進入操作頁，計時器維持 00:00；按下「入豆」才正式開始。</div><button type="submit" class="btn primary full">建立批次，進入操作頁</button></form></div></div>`;}
-async function createRoast(form){const fd=new FormData(form),product=String(fd.get('product')||'').trim();if(!product){notify('請輸入咖啡品項',true);return;}const date=new Date(fd.get('date')).getTime();if(!Number.isFinite(date))throw Error('生產日期格式不正確');const oldBatches=await getAll('batches');const code=nextCode(oldBatches,date),id=uid(),t=now();const batch={id,batchCode:code,productName:product,roastDateTime:date,status:'draft',chargeTime:null,roastedWeight:null,dropReason:'',colorDescription:'',resultObservation:'',notes:'',attachmentIds:[],createdAt:t,updatedAt:t};const actions=[{store:'batches',kind:'put',value:batch}];if(fd.get('lot')||fd.get('weight')||fd.get('condition'))actions.push({store:'inputs',kind:'put',value:{id:uid(),roastId:id,greenBeanName:product,greenLotCode:String(fd.get('lot')||''),inputWeight:num(fd.get('weight')),conditionNotes:String(fd.get('condition')||''),createdAt:t,updatedAt:t}});await transact(actions);document.getElementById('temp-new')?.remove();navigate('live',{batchId:id});notify('批次已建立，尚未開始計時');}
+function newForm(){
+ const date=localDt(now()),data=recordCache||{greenLots:[]};
+ return `<div class="modal-wrap"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h2>新增烘焙批次</h2><button class="btn smallbtn" data-action="close-modal">取消</button></div><form id="new-roast" class="form-stack"><div class="field"><label>咖啡品項／配方（必填）</label><input name="product" required autofocus placeholder="例如：肯亞 AA Top"></div><div class="field"><label>生產日期時間</label><input name="date" type="datetime-local" value="${date}" required></div><div class="field"><label>選擇生豆批次</label><select name="lotId" data-lot-picker="new">${lotOptions(data,'',true)}</select></div><div data-new-lot-fields hidden class="form-stack lot-new-fields"><div class="field"><label>新增生豆名稱</label><input name="newLotName" placeholder="例如：肯亞 AA Top"></div><div class="field"><label>新增生豆批次編號</label><input name="newLotCode" placeholder="例如：KEN-2026-07"></div><div class="field"><label>生豆批次備註（選填）</label><textarea name="newLotNotes" placeholder="這批原料的長期備註"></textarea></div></div><div class="field"><label>入豆重量（g，選填）</label><input name="weight" type="number" min="0" step="any" placeholder="例如：6000"></div><div class="field"><label>本次特殊豆況（選填）</label><textarea name="condition" placeholder="當次原料觀察"></textarea></div><div class="form-note">可提前建檔，不會開始計時。入豆時再按時間軸第一個節點。</div><button type="submit" class="btn primary full">建立批次，進入操作頁</button></form></div></div>`;
+}
+async function createRoast(form){
+ const fd=new FormData(form),product=String(fd.get('product')||'').trim();if(!product){notify('請輸入咖啡品項',true);return;}
+ const date=new Date(fd.get('date')).getTime();if(!Number.isFinite(date))throw Error('生產日期格式不正確');
+ const oldBatches=await getAll('batches'),code=nextCode(oldBatches,date),id=uid(),t=now();
+ const batch={id,batchCode:code,productName:product,roastDateTime:date,status:'draft',chargeTime:null,roastedWeight:null,dropReason:'',colorDescription:'',resultObservation:'',notes:'',attachmentIds:[],createdAt:t,updatedAt:t};
+ const actions=[{store:'batches',kind:'put',value:batch}],choice=String(fd.get('lotId')||'');let lot=null;
+ if(choice==='__new__'){
+   const name=String(fd.get('newLotName')||'').trim();if(!name)throw Error('請填寫新生豆批次的名稱');
+   lot={id:uid(),name,code:String(fd.get('newLotCode')||'').trim(),notes:String(fd.get('newLotNotes')||''),createdAt:t,updatedAt:t};
+   actions.push({store:'greenLots',kind:'put',value:lot});
+ }else if(choice){lot=await getOne('greenLots',choice);if(!lot)throw Error('找不到選擇的生豆批次，請重新選擇');}
+ if(lot||fd.get('weight')||fd.get('condition'))actions.push({store:'inputs',kind:'put',value:{id:uid(),roastId:id,greenLotId:lot?.id||'',greenBeanName:lot?.name||product,greenLotCode:lot?.code||'',inputWeight:num(fd.get('weight')),conditionNotes:String(fd.get('condition')||''),createdAt:t,updatedAt:t}});
+ await transact(actions);document.getElementById('temp-new')?.remove();navigate('live',{batchId:id});notify('批次已建立，尚未開始計時');
+}
 async function eventAdd(type){
  const b=await getOne('batches',S.batchId);if(!b)throw Error('找不到批次');
  if(b.status==='completed')throw Error('這批已結束；請從批次詳情補登或編輯紀錄。');
@@ -136,9 +174,9 @@ async function eventAdd(type){
    if(b.status!=='draft')throw Error('已經入豆，計時不會重複開始。');
    const active=(await getAll('batches')).some(x=>x.id!==b.id&&x.status==='roasting');
    if(active)throw Error('還有另一鍋正在計時；請先結束該批次。');
-   const t=now();
-   await transact([{store:'batches',kind:'put',value:{...b,status:'roasting',chargeTime:t,updatedAt:t}},{store:'events',kind:'put',value:{id:uid(),roastId:b.id,eventType:'charge',elapsedSeconds:0,recordedAt:t,beanTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t}}]);
-   await render();notify('已入豆，開始計時');return;
+   const t=now(),eventId=uid();
+   await transact([{store:'batches',kind:'put',value:{...b,status:'roasting',chargeTime:t,updatedAt:t}},{store:'events',kind:'put',value:{id:eventId,roastId:b.id,eventType:'charge',elapsedSeconds:0,recordedAt:t,beanTemperature:null,initialAirTemperature:null,initialDrumTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t}}]);
+   S.modal={store:'events',id:eventId};await render();notify('已入豆，開始計時');return;
  }
  if(b.status!=='roasting'||!b.chargeTime)throw Error('請先按「入豆」開始計時。');
  if(MILESTONE_TYPES.includes(type)){
@@ -153,10 +191,28 @@ async function eventAdd(type){
  if(type==='drop'){S.page='detail';S.tab='overview';}
  S.modal={store:'events',id:ev.id};await render();notify('事件已儲存');
 }
-async function childAdd(store,roastId){const t=now(),id=uid();let obj={id,roastId,createdAt:t,updatedAt:t,attachmentIds:[]};if(store==='inputs')Object.assign(obj,{greenBeanName:'',greenLotCode:'',inputWeight:null,conditionNotes:''});if(store==='tests')Object.assign(obj,{testDate:t,testType:'杯測',testMethod:'',testConditions:'',observations:'',conclusion:''});if(store==='feedback')Object.assign(obj,{feedbackDate:t,sourceType:'客戶',sourceName:'',feedbackContent:'',conditions:'',myAnalysis:'',followUp:''});await write(store,obj);S.modal={store,id};await render();}
+async function childAdd(store,roastId){const t=now(),id=uid();let obj={id,roastId,createdAt:t,updatedAt:t,attachmentIds:[]};if(store==='inputs')Object.assign(obj,{greenLotId:'',greenBeanName:'',greenLotCode:'',inputWeight:null,conditionNotes:''});if(store==='tests')Object.assign(obj,{testDate:t,testType:'杯測',testMethod:'',testConditions:'',observations:'',conclusion:''});if(store==='feedback')Object.assign(obj,{feedbackDate:t,sourceType:'客戶',sourceName:'',feedbackContent:'',conditions:'',myAnalysis:'',followUp:''});await write(store,obj);S.modal={store,id};await render();}
+async function addGreenLot(){const t=now(),id=uid();await write('greenLots',{id,name:'',code:'',notes:'',createdAt:t,updatedAt:t});S.modal={store:'greenLots',id};await render();}
+async function assignInputLot(inputId,lotId){
+ await flushAll();const input=await getOne('inputs',inputId);if(!input)return;
+ const lot=lotId?await getOne('greenLots',lotId):null;if(lotId&&!lot)throw Error('找不到生豆批次');
+ await write('inputs',{...input,greenLotId:lot?.id||'',lotLinkSkipped:!lot,greenBeanName:lot?.name||input.greenBeanName,greenLotCode:lot?.code||input.greenLotCode,updatedAt:now()});
+ S.cleanupVerified=false;await render();notify(lot?'已關聯生豆批次':'已取消生豆關聯');
+}
+// 既有 v1.2 生豆原料的名稱和批號保持原貌，只為有批號者增加可重複選取的主檔。
+async function migrateLegacyGreenLots(){
+ const data=await dump(),actions=[],keyToLot=new Map((data.greenLots||[]).map(l=>[`${(l.name||'').trim()}\u0000${(l.code||'').trim()}`,l]));
+ const t=now();for(const input of data.inputs){
+   if(input.greenLotId||input.lotLinkSkipped||!String(input.greenLotCode||'').trim())continue;
+   const name=String(input.greenBeanName||'未命名生豆').trim(),code=String(input.greenLotCode).trim(),key=`${name}\u0000${code}`;
+   let lot=keyToLot.get(key);if(!lot){lot={id:uid(),name,code,notes:'',createdAt:t,updatedAt:t};keyToLot.set(key,lot);actions.push({store:'greenLots',kind:'put',value:lot});}
+   actions.push({store:'inputs',kind:'put',value:{...input,greenLotId:lot.id}});
+ }
+ if(actions.length)await transact(actions);
+}
 async function addManualEvent(roastId){const t=now(),obj={id:uid(),roastId,eventType:'other',elapsedSeconds:0,recordedAt:t,beanTemperature:null,gasPressure:'',airflowSetting:'',note:'',attachmentIds:[],createdAt:t,updatedAt:t};await write('events',obj);S.modal={store:'events',id:obj.id};await render();}
 const pending=new Map(), inFlight=new Set(), writeQueues=new Map();
-function convertField(field,value){if(['roastDateTime','testDate','feedbackDate'].includes(field))return value?new Date(value).getTime():null;if(['inputWeight','roastedWeight','beanTemperature'].includes(field))return num(value);if(field==='elapsedSeconds'){const t=secs(value);if(t===null)throw Error('時間請使用 分:秒（例如 08:30）');return t;}return value;}
+function convertField(field,value){if(['roastDateTime','testDate','feedbackDate'].includes(field))return value?new Date(value).getTime():null;if(['inputWeight','roastedWeight','beanTemperature','initialAirTemperature','initialDrumTemperature'].includes(field))return num(value);if(field==='elapsedSeconds'){const t=secs(value);if(t===null)throw Error('時間請使用 分:秒（例如 08:30）');return t;}return value;}
 function queueField(store,id,field,value){const key=`${store}/${id}`;let p=pending.get(key);if(!p){p={store,id,fields:{},timer:null};pending.set(key,p);}p.fields[field]=value;clearTimeout(p.timer);status('儲存中…');const s=document.querySelector('#modal-save-state');if(s)s.textContent='儲存中…';p.timer=setTimeout(()=>flushKey(key).catch(e=>notify(e.message,true)),220);}
 async function flushKey(key){
  const p=pending.get(key);if(!p)return;
@@ -167,11 +223,13 @@ async function flushKey(key){
    const old=await getOne(p.store,p.id);if(!old)return;
    const updated={...old,...fields,updatedAt:now()};
    if(p.store==='batches'&&!updated.productName?.trim())throw Error('咖啡品項不能留空');
+   if(p.store==='greenLots'&&!updated.name?.trim())throw Error('生豆名稱不能留空');
    if(p.store==='events'&&old.eventType!==updated.eventType&&(old.eventType==='drop'||updated.eventType==='drop')){
      const b=await getOne('batches',old.roastId);const acts=[{store:'events',kind:'put',value:updated}];
      if(b)acts.push({store:'batches',kind:'put',value:{...b,status:updated.eventType==='drop'?'completed':'roasting',updatedAt:now()}});
      await transact(acts);
-   }else await write(p.store,updated);
+   }else if(p.store==='greenLots'){const inputs=(await getAll('inputs')).filter(i=>i.greenLotId===id);await transact([{store:'greenLots',kind:'put',value:updated},...inputs.map(i=>({store:'inputs',kind:'put',value:{...i,greenBeanName:updated.name,greenLotCode:updated.code,updatedAt:now()}}))]);}
+   else await write(p.store,updated);
    S.cleanupVerified=false;
    if(!pending.has(key)){status('本機已儲存');const s=document.querySelector('#modal-save-state');if(s)s.textContent='本機已儲存';}
  });
@@ -195,7 +253,7 @@ async function handleUploaded(kind,file){if(!file)return;if(kind==='restore'){
   const summary=`備份日期：${dtstr(Date.parse(parsed.manifest.exportedAt))}\n批次數：${parsed.data.batches.length}\n事件數：${parsed.data.events.length}\n照片數：${parsed.data.attachments.length}`;
   if(!confirm(`${summary}\n\n完整還原將【取代】此裝置所有現有資料。請先另行備份目前資料。確定還原？`))return;
   if(!confirm('最後確認：這會清除目前本機資料，並改成備份檔內容。確定執行？'))return;
-  await restoreZip(file);await setSetting('lastBackupConfirmedAt',0);S.lastZip=null;S.archive=null;S.cleanupIds=new Set();S.cleanupVerified=false;S.cleanupInitialized=false;navigate('home');notify('完整資料已還原');
+  await restoreZip(file);await migrateLegacyGreenLots();await setSetting('lastBackupConfirmedAt',0);S.lastZip=null;S.archive=null;S.cleanupIds=new Set();S.cleanupVerified=false;S.cleanupInitialized=false;navigate('home');notify('完整資料已還原');
  }else if(kind==='archive'){
    const parsed=await parseZip(file);S.archive=parsed;S.tab='overview';navigate('archive');notify(`封存檔已讀取，共 ${parsed.data.batches.length} 批（唯讀）`);
  }else if(kind==='verify'){
@@ -211,7 +269,9 @@ async function takeAction(el){const act=el.dataset.action;if(!act)return;
  switch(act){
  case 'goto':navigate(el.dataset.page);break;
  case 'new':{const wrap=document.createElement('div');wrap.id='temp-new';wrap.innerHTML=newForm();root.append(wrap);break;}
- case 'close-modal':await flushAll();S.modal=null;document.getElementById('temp-new')?.remove();await render();break;
+ case 'close-modal':await flushAll();if(S.modal?.store==='greenLots'){const l=await getOne('greenLots',S.modal.id);if(l&&!l.name?.trim())await erase('greenLots',l.id);}S.modal=null;document.getElementById('temp-new')?.remove();await render();break;
+ case 'lot-open':navigate('lot-detail',{lotId:el.dataset.id});break;
+ case 'add-lot':await addGreenLot();break;
  case 'open':{const b=await getOne('batches',el.dataset.id);navigate(b?.status==='roasting'||b?.status==='draft'?'live':'detail',{batchId:el.dataset.id,tab:'overview'});break;}
  case 'resume':navigate('live',{batchId:el.dataset.id});break;
  case 'start-draft':navigate('live',{batchId:el.dataset.id});break;
@@ -233,6 +293,7 @@ async function takeAction(el){const act=el.dataset.action;if(!act)return;
 }
 function updateSearchControls(el){S[el.dataset.search]=el.value;const key=el.dataset.search;
  if(key==='archiveQuery'){const res=document.getElementById('archive-results');if(res){const shell=archivePage();const tpl=document.createElement('div');tpl.innerHTML=shell;res.innerHTML=tpl.querySelector('#archive-results')?.innerHTML||'';}return;}
+ if(key==='lotQuery'&&S.page==='lots'){const box=document.getElementById('lot-results');if(box){const d=recordCache;const results=[...(d?.greenLots||[])].filter(l=>`${l.name||''} ${l.code||''} ${l.notes||''}`.toLowerCase().includes(S.lotQuery.toLowerCase())).sort((a,b)=>a.name.localeCompare(b.name,'zh-Hant'));box.innerHTML=results.length?results.map(l=>`<button class="roastline" data-action="lot-open" data-id="${esc(l.id)}"><div><strong>${esc(l.name)}</strong><div class="details">批次：${esc(l.code||'未填')} · ${(d.inputs||[]).filter(i=>i.greenLotId===l.id).length} 筆使用紀錄</div></div><span class="arrow">›</span></button>`).join(''):empty('找不到符合條件的生豆批次');}return;}
  if(key==='query'){
    // Avoid replacing a focused search input while typing; update list only.
    const box=document.getElementById('search-results');if(box){const q=S.query.toLowerCase();let candidates=(recordCache?.batches||[]).filter(b=>{
@@ -247,7 +308,7 @@ function updateSearchControls(el){S[el.dataset.search]=el.value;const key=el.dat
 document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(el){e.preventDefault();takeAction(el).catch(err=>{console.error(err);notify(err.message||'操作失敗',true);});}});
 document.addEventListener('submit',e=>{if(e.target.id==='new-roast'){e.preventDefault();createRoast(e.target).catch(err=>notify(err.message,true));}});
 document.addEventListener('input',e=>{const el=e.target;if(el.dataset.search)updateSearchControls(el);if(el.dataset.field){const wrap=el.closest('[data-recordstore]');if(wrap)queueField(wrap.dataset.recordstore,wrap.dataset.recordid,el.dataset.field,el.value);}});
-document.addEventListener('change',e=>{const el=e.target;if(el.dataset.upload){handleUploaded(el.dataset.upload,el.files?.[0]).catch(err=>{console.error(err);notify(err.message||'檔案處理失敗',true);});el.value='';}else if(el.dataset.photos){addPhotos(el.dataset.photos,el.dataset.id,Array.from(el.files||[])).catch(err=>{console.error(err);notify(err.message||'附件處理失敗',true);});el.value='';}else if(el.dataset.clean){el.checked?S.cleanupIds.add(el.dataset.clean):S.cleanupIds.delete(el.dataset.clean);S.cleanupVerified=false;render();}else if(el.dataset.field){const wrap=el.closest('[data-recordstore]');if(wrap)queueField(wrap.dataset.recordstore,wrap.dataset.recordid,el.dataset.field,el.value);}});
+document.addEventListener('change',e=>{const el=e.target;if(el.dataset.lotPicker==='new'){const block=el.closest('form')?.querySelector('[data-new-lot-fields]');if(block)block.hidden=el.value!=='__new__';return;}if(el.dataset.lotInput){assignInputLot(el.dataset.lotInput,el.value).catch(err=>notify(err.message,true));return;}if(el.dataset.upload){handleUploaded(el.dataset.upload,el.files?.[0]).catch(err=>{console.error(err);notify(err.message||'檔案處理失敗',true);});el.value='';}else if(el.dataset.photos){addPhotos(el.dataset.photos,el.dataset.id,Array.from(el.files||[])).catch(err=>{console.error(err);notify(err.message||'附件處理失敗',true);});el.value='';}else if(el.dataset.clean){el.checked?S.cleanupIds.add(el.dataset.clean):S.cleanupIds.delete(el.dataset.clean);S.cleanupVerified=false;render();}else if(el.dataset.field){const wrap=el.closest('[data-recordstore]');if(wrap)queueField(wrap.dataset.recordstore,wrap.dataset.recordid,el.dataset.field,el.value);}});
 document.addEventListener('focusout',e=>{if(e.target.dataset.field){const w=e.target.closest('[data-recordstore]');if(w)flushKey(`${w.dataset.recordstore}/${w.dataset.recordid}`).catch(err=>notify(err.message,true));}});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')flushAll().catch(e=>console.error('Background save failed',e));});
 window.addEventListener('pagehide',()=>{flushAll().catch(e=>console.error('Exit save failed',e));});
@@ -261,4 +322,4 @@ async function migrateLegacyDropNotes(){
  }
  if(actions.length)await transact(actions,{markModified:false});
 }
-(async()=>{try{await openDb();await migrateLegacyDropNotes();const data=await dump();const active=data.batches.filter(b=>b.status==='roasting').sort((a,b)=>b.chargeTime-a.chargeTime)[0];if(active){S.page='live';S.batchId=active.id;}if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW registration:',e));await render();}catch(e){console.error(e);root.innerHTML=`<div class="content"><div class="notice error-notice">無法開啟本機資料庫：${esc(e.message)}。請確認使用 HTTPS 或 localhost，並允許瀏覽器儲存資料。</div></div>`;}})();
+(async()=>{try{await openDb();await migrateLegacyDropNotes();await migrateLegacyGreenLots();const data=await dump();const active=data.batches.filter(b=>b.status==='roasting').sort((a,b)=>b.chargeTime-a.chargeTime)[0];if(active){S.page='live';S.batchId=active.id;}if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(e=>console.warn('SW registration:',e));await render();}catch(e){console.error(e);root.innerHTML=`<div class="content"><div class="notice error-notice">無法開啟本機資料庫：${esc(e.message)}。請確認使用 HTTPS 或 localhost，並允許瀏覽器儲存資料。</div></div>`;}})();
